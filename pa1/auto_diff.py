@@ -463,7 +463,7 @@ class DivOp(Op):
         """Given gradient of division node, return partial adjoint to each input."""
         """TODO: your code here"""
         grad_A = output_grad / node.inputs[1]
-        grad_B = -output_grad * node.inputs[0] / (node.inputs[1] ** 2)
+        grad_B = -1 * output_grad * node.inputs[0] / (node.inputs[1] * node.inputs[1])
         return [grad_A, grad_B]
 
 class DivByConstOp(Op):
@@ -513,7 +513,7 @@ class TransposeOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of transpose node, return partial adjoint to input."""
         """TODO: your code here"""
-        return [TransposeOp(output_grad, node.attrs["dim0"], node.attrs["dim1"])]
+        return [TransposeOp()(output_grad, node.attrs["dim1"], node.attrs["dim0"])]
 
 class MatMulOp(Op):
     """Matrix multiplication op of two nodes."""
@@ -552,8 +552,8 @@ class MatMulOp(Op):
         """TODO: your code here"""
         # C = A @ B. output_grad = dL/dC
         A, B = node.inputs
-        dL_dA = output_grad @ B.t()
-        dL_dB = A.t() @ output_grad
+        dL_dA = MatMulOp()(output_grad, TransposeOp()(B, -2, -1))
+        dL_dB = MatMulOp()(TransposeOp()(A, -2, -1), output_grad)
         return [dL_dA, dL_dB]
 
 
@@ -606,9 +606,6 @@ class LayerNormOp(Op):
         mean = torch.mean(x, dim=-1, keepdim=True)
         # var = torch.var(x, dim=-1, keepdim=True)
         var = torch.sum((x-mean)**2, dim=-1, keepdim=True) / (x.size(-1))
-        print("Mean:", mean)
-        print("Variance:", var)
-        print("Normalized Output:", (x - mean) / torch.sqrt(var + node.eps))
         return (x-mean) / torch.sqrt(var + node.eps)
 
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
@@ -618,7 +615,7 @@ class LayerNormOp(Op):
         """
         """TODO: your code here"""
         x = node.inputs[0] # Input tensor from the forward pass
-        mu = torch.mean(x, dim=-1, keepdim=True)
+        mu = torch.sum(x, dim=node.attrs["normalized_shape"], keepdim=True) / x.size(-1)
         # var = torch.var(x, dim=-1, keepdim=True)
         var = torch.sum((x - mean) ** 2, dim=-1, keepdim=True) / (x.size(-1))
         eps = node.attrs["eps"]
@@ -626,8 +623,8 @@ class LayerNormOp(Op):
         inv_std = 1.0 / torch.sqrt(var + eps)
         x_mu = x - mu # For the right most part of dl/dx
 
-        mean_grad = torch.mean(output_grad, dim=node.normalized_shape, keepdim=True)
-        g_dot = torch.sum(output_grad * x_mu, dim=node.normalized_shape, keepdim=True)
+        mean_grad = torch.mean(output_grad, dim=-1, keepdim=True)
+        g_dot = torch.sum(output_grad * x_mu, dim=-1, keepdim=True)
 
         grad_x = inv_std * (output_grad - mean_grad - (g_dot * x_mu) * inv_std ** 2)
         return [grad_x]
@@ -651,9 +648,7 @@ class ReLUOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of ReLU node, return partial adjoint to input."""
         """TODO: your code here"""
-        if output_grad > 0:
-            return [0.0]
-        return [1.0]
+        return [output_grad * GreaterThanOp()(node, ZerosLikeOp()(node))]
 
 class SqrtOp(Op):
     """Op to compute element-wise square root."""
@@ -854,3 +849,32 @@ def gradients(output_node: Node, nodes: List[Node]) -> List[Node]:
         A list of gradient nodes, one for each input nodes respectively.
     """
     """TODO: your code here"""
+    # 1 - Topological sort the nodes
+    # 2 - Map each input node to its corresponding output
+    # 3 - Compute the output gradient for each node in the topological order
+    # 4 - Return the output gradients for the nodes in eval_nodes
+
+    topo_order = topological_sort(nodes)[::-1] # Topological sort the nodes. Since it is backwards, so we reverse the order
+
+    # Need to init the gradient for the output node at the end(begining)
+    grads_map = {}
+    grads_map[output_node] = 1.0
+
+    # backward pass to compute all the gradients w.r.t input
+
+    for node in topo_order:
+        if node not in grads_map:
+            continue
+        output_grad = grads_map[node]
+        adjoint_grad = node.op.gradients(node, output_grad)
+
+        for input_node, adjoint in zip(node.inputs, adjoint_grad):
+            if input_node in grads_map:
+                grads_map[input_node] += adjoint
+            else:
+                grads_map[input_node] = adjoint
+    
+    return [grads_map[node] for node in nodes]
+
+
+    

@@ -35,6 +35,22 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     """
 
     """TODO: Your code here"""
+    # 1 - Implement the linear transformation layer that performaces output = inpput @ weight + bias
+    # 2 - Implement the single-head attention mechanism that computes the scale dot-product attention
+    # 3- Implement the encoder layer that combines self-attention and feed-forward network.
+
+    # Implementing part 1 (?)
+    x = X
+    w = ad.Variable(ad.ones_like(x)[0, 0, :], name='weights')
+    w = ad.broadcast(w, input_shape=[model_dim,], target_shape = [model_dim, model_dim])
+    b = ad.Variable(ad.zeros_like(x)[0, 0, :], name='bias')
+
+    x = ad.matmul(x, w) + b 
+
+    # Implenting the single-head attention mechanism
+    w_q = 
+    w_k =
+    w_v =
 
 
 def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:

@@ -84,7 +84,6 @@ class Variable(Node):
     def __init__(self, name: str) -> None:
         super().__init__(inputs=[], op=placeholder, name=name)
 
-
 class Op:
     """The class of operations performed on nodes."""
 
@@ -402,7 +401,9 @@ class LogOp(Op):
 
 
 class BroadcastOp(Op):
-    def __call__(self, node_A: Node, input_shape: List[int], target_shape: List[int]) -> Node:
+    def __call__(
+        self, node_A: Node, input_shape: List[int], target_shape: List[int]
+    ) -> Node:
         return Node(
             inputs=[node_A],
             op=self,
@@ -417,28 +418,36 @@ class BroadcastOp(Op):
 
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of broadcast node, return partial adjoint to input.
-        
+
         For broadcasting, we need to sum out the broadcasted dimensions to get
         back to the original shape.
         """
         if "input_shape" not in node.attrs:
-            raise ValueError("Input shape is not set. Make sure compute() is called before gradient()")
-            
+            raise ValueError(
+                "Input shape is not set. Make sure compute() is called before gradient()"
+            )
+
         input_shape = node.attrs["input_shape"]
         output_shape = node.attrs["target_shape"]
-        
+
         dims_to_sum = []
-        for i, (in_size, out_size) in enumerate(zip(input_shape[::-1], output_shape[::-1])):
+        for i, (in_size, out_size) in enumerate(
+            zip(input_shape[::-1], output_shape[::-1])
+        ):
             if in_size != out_size:
                 dims_to_sum.append(len(output_shape) - 1 - i)
-                
+
         grad = output_grad
         if dims_to_sum:
             grad = sum_op(grad, dim=dims_to_sum, keepdim=True)
-            
+
         if len(output_shape) > len(input_shape):
-            grad = sum_op(grad, dim=list(range(len(output_shape) - len(input_shape))), keepdim=False)
-            
+            grad = sum_op(
+                grad,
+                dim=list(range(len(output_shape) - len(input_shape))),
+                keepdim=False,
+            )
+
         return [grad]
 
 class DivOp(Op):
@@ -613,20 +622,35 @@ class LayerNormOp(Op):
         Given gradient of the LayerNorm node wrt its output, return partial 
         adjoint (gradient) wrt the input x.
         """
-        """TODO: your code here"""
-        x = node.inputs[0] # Input tensor from the forward pass
-        mu = torch.sum(x, dim=node.attrs["normalized_shape"], keepdim=True) / x.size(-1)
-        # var = torch.var(x, dim=-1, keepdim=True)
-        var = torch.sum((x - mean) ** 2, dim=-1, keepdim=True) / (x.size(-1))
+        x = node.inputs[0]  # Input tensor from the forward pass
         eps = node.attrs["eps"]
+        D = node.attrs["normalized_shape"][-1]
 
-        inv_std = 1.0 / torch.sqrt(var + eps)
-        x_mu = x - mu # For the right most part of dl/dx
+        mu = sum_op(x, dim=(-1,), keepdim=True) / D
+        var = sum_op(power(sub(x, mu), 2.0), dim=(-1,), keepdim=True) / D
 
-        mean_grad = torch.mean(output_grad, dim=-1, keepdim=True)
-        g_dot = torch.sum(output_grad * x_mu, dim=-1, keepdim=True)
+        std = sqrt(var + eps)  # Compute standard deviation
+        inv_std = div(ones_like(x), std)
 
-        grad_x = inv_std * (output_grad - mean_grad - (g_dot * x_mu) * inv_std ** 2)
+        x_mu = sub(x, mu)  # Centered input
+        sum_dy = sum_op(output_grad, dim=(-1,), keepdim=True)
+        mean_grad = mean_grad = div_by_const(sum_dy, D)
+        g_dot = sum_op(mul(output_grad, x_mu), dim=(-1,), keepdim=True)
+        mean_g_dot = div_by_const(g_dot, D)
+        grad_x = mul(
+            inv_std,
+            sub(
+                output_grad,
+                add(
+                    mean_grad,
+                    mul(
+                        mean_g_dot,  # <-- 1/D factor inserted here
+                        mul(x_mu, power(inv_std, 2.0)),
+                    ),
+                ),
+            ),
+        )
+
         return [grad_x]
 
 class ReLUOp(Op):
@@ -687,7 +711,8 @@ class PowerOp(Op):
 
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """TODO: your code here"""
-        return [torch.pow(node.inputs[0], node.attrs["exponent"] - 1) * output_grad]
+        exponent = node.attrs["exponent"]
+        return [output_grad * exponent * power(node.inputs[0], (exponent-1))] # d(x^a)/dx = a*x^(a-1)
 
 class MeanOp(Op):
     """Op to compute mean along specified dimensions.
@@ -815,15 +840,15 @@ class Evaluator:
 
         for node, value in input_values.items():
             values_map[node] = value
-    
+
         # Compute output gradients for eval_nodes
         for node in topo_order:
-            if node in values_map: # meaning that the value of the node is already computed, so we skip.
-                continue
-            else: # Get the needed input values for the node to compute (call the compute function)
+            if node not in values_map:
+                print(f"Warning: Node {node.name} remains a placeholder!")
+                # Get the needed input values for the node to compute (call the compute function)
                 dependencies = [values_map[input_node] for input_node in node.inputs]
                 values_map[node] = node.op.compute(node, dependencies)
-        
+
         res = []
         for node in self.eval_nodes:
             res.append(values_map[node])
@@ -854,27 +879,49 @@ def gradients(output_node: Node, nodes: List[Node]) -> List[Node]:
     # 3 - Compute the output gradient for each node in the topological order
     # 4 - Return the output gradients for the nodes in eval_nodes
 
-    topo_order = topological_sort(nodes)[::-1] # Topological sort the nodes. Since it is backwards, so we reverse the order
-
+    topo_order = topological_sort([output_node]) # Topological sort the nodes. 
+    # print("Topological Order:", [node for node in topo_order])
     # Need to init the gradient for the output node at the end(begining)
     grads_map = {}
-    grads_map[output_node] = 1.0
+    grads_map[output_node] = ones_like(output_node)
 
     # backward pass to compute all the gradients w.r.t input
 
-    for node in topo_order:
+    for node in reversed(topo_order):
         if node not in grads_map:
             continue
         output_grad = grads_map[node]
-        adjoint_grad = node.op.gradients(node, output_grad)
+        if node.op is placeholder:
+            continue
+        # print("Node: ", node.name, "Op type: ", node.op)
+        adjoint_grad = node.op.gradient(node, output_grad)
+        print("Node: ", node.name, "Output Grad: ", output_grad, "Adjoint Grad: ", adjoint_grad)
+        # for input_node, adjoint in zip(node.inputs, adjoint_grad):
+        #     if input_node in grads_map:
+        #         grads_map[input_node] = add(grads_map[input_node], adjoint)
+        #     else:
+        #         grads_map[input_node] = adjoint
 
-        for input_node, adjoint in zip(node.inputs, adjoint_grad):
-            if input_node in grads_map:
-                grads_map[input_node] += adjoint
+        for inp, part in zip(node.inputs, adjoint_grad):
+            # Accumulate partial derivative into grad_map[inp]
+            if inp not in grads_map:
+                grads_map[inp] = part
             else:
-                grads_map[input_node] = adjoint
-    
-    return [grads_map[node] for node in nodes]
+                # Both sides are Node -> we can do `grad_map[inp] + part`
+                grads_map[inp] = grads_map[inp] + part
 
-
-    
+        # for inp, p in zip(node.inputs, adjoint_grad):
+        #     # p is always a Node (the partial gradient wrt that input)
+        #     if inp not in grads_map or grads_map[inp] == 0.0:
+        #         # If we have not stored anything for inp yet, just store p
+        #         grads_map[inp] = p
+        #     else:
+        #         # grad_map[inp] could be float or Node
+        #         existing = grads_map[inp]
+        #         if isinstance(existing, float):
+        #             # Add as "Node + float" to avoid the 'float has no .name' issue
+        #             grads_map[inp] = p + existing  # calls p.__radd__(float)
+        #         else:
+        #             # both sides are Node -> we can do add(existing, p) or (existing + p)
+        #             grads_map[inp] = add(existing, p)
+    return [grads_map[c] if c in grads_map else zeros_like(c) for c in nodes]

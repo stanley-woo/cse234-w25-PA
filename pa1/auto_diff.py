@@ -737,6 +737,19 @@ class MeanOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """TODO: your code here"""
         return [output_grad / node.inputs[0].size(node.attrs["dim"])]
+    
+# Custom operations for Transformer.py
+class TransposeForTransformerOp(Op):
+    def __call__(self, node: Node, dim1: int, dim2: int) -> Node:
+        return Node([node], self, attrs={"dim1": dim1, "dim2": dim2}, name=f"TransposeForTransformer({node.name}, {dim1}, {dim2})")
+    
+    def compute(self, node:Node, input_values: List) -> torch.Tensor:
+        dim1 = node.attrs["dim1"]
+        dim2 = node.attrs["dim2"]
+        return input_values[0].transpose(dim1, dim2)
+    
+    def gradient(self, node: Node, output_grad: Node) -> list[Node]:
+        return [TransposeForTransformerOp()(output_grad, node.attrs["dim2"], node.attrs["dim1"])]
 
 # Create global instances of ops.
 # Your implementation should just use these instances, rather than creating new instances.
@@ -764,6 +777,8 @@ expand_as_3d = ExpandAsOp3d()
 log = LogOp()
 sub = SubOp()
 broadcast = BroadcastOp()
+# The custome operation(s) for Transformer.py
+transpose_for_transformer = TransposeForTransformerOp()
 
 def topological_sort(nodes):
     """Helper function to perform topological sort on nodes.
@@ -924,4 +939,5 @@ def gradients(output_node: Node, nodes: List[Node]) -> List[Node]:
         #         else:
         #             # both sides are Node -> we can do add(existing, p) or (existing + p)
         #             grads_map[inp] = add(existing, p)
+    
     return [grads_map[c] if c in grads_map else zeros_like(c) for c in nodes]

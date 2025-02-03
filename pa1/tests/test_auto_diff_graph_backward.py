@@ -74,7 +74,6 @@ def test_gradient_of_gradient():
         ],
     )
 
-
 if __name__ == "__main__":
     test_graph()
     test_gradient_of_gradient()

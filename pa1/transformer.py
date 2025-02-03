@@ -12,6 +12,7 @@ import torch
 from torchvision import datasets, transforms
 
 max_len = 28
+transposer_for_transformer = ad.TransposeForTransformerOp()
 
 def transformer(X: ad.Node, nodes: List[ad.Node], 
                       model_dim: int, seq_length: int, eps, batch_size, num_classes) -> ad.Node:
@@ -45,12 +46,49 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     w = ad.broadcast(w, input_shape=[model_dim,], target_shape = [model_dim, model_dim])
     b = ad.Variable(ad.zeros_like(x)[0, 0, :], name='bias')
 
-    x = ad.matmul(x, w) + b 
+    x_proj = ad.matmul(x, w) + b
+    # Printing the shape of x_proj for debugging
+    print('x_proj:', x_proj.shape)
 
     # Implenting the single-head attention mechanism
-    w_q = 
-    w_k =
-    w_v =
+    # Trying to inititialize the ws with small random values.
+    stdv = 1.0 / np.sqrt(model_dim)
+    w_q = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_q')
+    w_k = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_k')
+    w_v = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_v')
+
+    nodes.extend([w, b, w_q, w_k, w_v])
+
+    # x shape should be (batch_size, seq_length, model_dim).
+    # w_x shape is (model_dim, model_dim). x @ w_x should be (batch_size, seq_length, model_dim)
+    q = ad.matmul(x, w_q)
+    k = ad.matmul(x, w_k)
+    v = ad.matmul(x, w_v)
+
+    K_T = transposer_for_transformer(k, 1, 2)
+    attn = ad.matmul(q, K_T) # A tensor of shape (batch_size, seq_length, seq_length)
+    attn = attn / np.sqrt(model_dim)
+    attn = ad.softmax(attn, dim=-1) # attn should have a shape of (batch_size, seq_length, seq_length)
+    print("attention score shape: ", attn.shape)
+
+    # Implementing the encoder layer
+    w_l1 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_l1')
+    b_l1 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim,)), name='bias_l1')
+    w_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, num_classes)), name='weights_l2')
+    b_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (num_classes,)), name='bias_l2')
+
+    nodes.extend([w_l1, b_l1, w_l2, b_l2])
+
+    # Implementing the feed-forward network
+    ffn = ad.matmul(attn, w_l1) + b_l1 # Shape of ffn should be (batch_size, seq_length, model_dim)
+    ffn = ad.relu(ffn)
+
+    ffn2 = ad.matmul(ffn, w_l2) + b_l2 # Shape of ffn2 should be (batch_size, seq_length, num_classes)
+
+    output = ad.mean(ffn2, dim=1) # Shape of output should be (batch_size, num_classes)
+
+    return output
+
 
 
 def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
@@ -85,7 +123,7 @@ def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
     Try to think about why our softmax loss may need the batch size.
     """
     """TODO: Your code here"""
-
+    
 
 
 def sgd_epoch(

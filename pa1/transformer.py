@@ -36,18 +36,12 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     """
 
     """TODO: Your code here"""
-    # 1 - Implement the linear transformation layer that performaces output = inpput @ weight + bias
-    # 2 - Implement the single-head attention mechanism that computes the scale dot-product attention
-    # 3- Implement the encoder layer that combines self-attention and feed-forward network.
-
-    # Implementing part 1 (?)
     x = X
     w = ad.Variable(ad.ones_like(x)[0, 0, :], name='weights')
     w = ad.broadcast(w, input_shape=[model_dim,], target_shape = [model_dim, model_dim])
     b = ad.Variable(ad.zeros_like(x)[0, 0, :], name='bias')
 
     x_proj = ad.matmul(x, w) + b
-    # Printing the shape of x_proj for debugging
     print('x_proj:', x_proj.shape)
 
     # Implenting the single-head attention mechanism
@@ -57,7 +51,7 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     w_k = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_k')
     w_v = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_v')
 
-    nodes.extend([w, b, w_q, w_k, w_v])
+    # nodes.extend([w, b, w_q, w_k, w_v])
 
     # x shape should be (batch_size, seq_length, model_dim).
     # w_x shape is (model_dim, model_dim). x @ w_x should be (batch_size, seq_length, model_dim)
@@ -77,7 +71,7 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     w_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, num_classes)), name='weights_l2')
     b_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (num_classes,)), name='bias_l2')
 
-    nodes.extend([w_l1, b_l1, w_l2, b_l2])
+    # nodes.extend([w_l1, b_l1, w_l2, b_l2])
 
     # Implementing the feed-forward network
     ffn = ad.matmul(attn, w_l1) + b_l1 # Shape of ffn should be (batch_size, seq_length, model_dim)
@@ -88,7 +82,6 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     output = ad.mean(ffn2, dim=1) # Shape of output should be (batch_size, num_classes)
 
     return output
-
 
 
 def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
@@ -123,8 +116,8 @@ def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
     Try to think about why our softmax loss may need the batch size.
     """
     """TODO: Your code here"""
-    
-
+    loss = -ad.sum_op(y_one_hot * Z, dim=(1,), keepdim=False) / batch_size
+    return loss
 
 def sgd_epoch(
     f_run_model: Callable,
@@ -190,19 +183,21 @@ def sgd_epoch(
         
         # Compute forward and backward passes
         # TODO: Your code here
+        logigs, loss, *grads = f_run_model(X_batch, y_batch, model_weights)
 
-        
         # Update weights and biases
         # TODO: Your code here
+        for grad, model_weight in zip(grads, model_weights):
+            model_weight -= lr * grad.sum(dim=0)
         # Hint: You can update the tensor using something like below:
         # W_Q -= lr * grad_W_Q.sum(dim=0)
 
         # Accumulate the loss
         # TODO: Your code here
+        total_loss += loss
 
 
     # Compute the average loss
-    
     average_loss = total_loss / num_examples
     print('Avg_loss:', average_loss)
 
@@ -233,6 +228,7 @@ def train_model():
     lr = 0.02
 
     # TODO: Define the forward graph.
+    
 
     y_predict: ad.Node = ... # TODO: The output of the forward pass
     y_groundtruth = ad.Variable(name="y")

@@ -37,21 +37,20 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
 
     """TODO: Your code here"""
     x = X
-    w = ad.Variable(ad.ones_like(x)[0, 0, :], name='weights')
-    w = ad.broadcast(w, input_shape=[model_dim,], target_shape = [model_dim, model_dim])
-    b = ad.Variable(ad.zeros_like(x)[0, 0, :], name='bias')
+    print(f"Nodes: {nodes} and len of nodes: {len(nodes)}")
+    w_q = nodes[0]
+    w_k = nodes[1]
+    w_v = nodes[2]
+    w_0 = nodes[3]
+    w_l1 = nodes[4]
+    w_l2 = nodes[5]
+    b_l1 = nodes[6]
+    b_l2 = nodes[7]
 
-    x_proj = ad.matmul(x, w) + b
-    print('x_proj:', x_proj.shape)
-
-    # Implenting the single-head attention mechanism
-    # Trying to inititialize the ws with small random values.
-    stdv = 1.0 / np.sqrt(model_dim)
-    w_q = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_q')
-    w_k = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_k')
-    w_v = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_v')
-
-    # nodes.extend([w, b, w_q, w_k, w_v])
+    b = ad.Variable(np.random.uniform(-eps, eps, (model_dim,)), name='bias')
+    x_proj = ad.matmul(x, w_0) + b
+    # Never used x_proj?
+    # print('x_proj:', x_proj.shape)
 
     # x shape should be (batch_size, seq_length, model_dim).
     # w_x shape is (model_dim, model_dim). x @ w_x should be (batch_size, seq_length, model_dim)
@@ -64,14 +63,6 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     attn = attn / np.sqrt(model_dim)
     attn = ad.softmax(attn, dim=-1) # attn should have a shape of (batch_size, seq_length, seq_length)
     print("attention score shape: ", attn.shape)
-
-    # Implementing the encoder layer
-    w_l1 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, model_dim)), name='weights_l1')
-    b_l1 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim,)), name='bias_l1')
-    w_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (model_dim, num_classes)), name='weights_l2')
-    b_l2 = ad.Variable(np.random.uniform(-stdv, stdv, (num_classes,)), name='bias_l2')
-
-    # nodes.extend([w_l1, b_l1, w_l2, b_l2])
 
     # Implementing the feed-forward network
     ffn = ad.matmul(attn, w_l1) + b_l1 # Shape of ffn should be (batch_size, seq_length, model_dim)
@@ -183,7 +174,7 @@ def sgd_epoch(
         
         # Compute forward and backward passes
         # TODO: Your code here
-        logigs, loss, *grads = f_run_model(X_batch, y_batch, model_weights)
+        _, loss, *grads = f_run_model(X_batch, y_batch, model_weights)
 
         # Update weights and biases
         # TODO: Your code here
@@ -194,7 +185,7 @@ def sgd_epoch(
 
         # Accumulate the loss
         # TODO: Your code here
-        total_loss += loss
+        total_loss += loss * batch_size
 
 
     # Compute the average loss
@@ -228,17 +219,15 @@ def train_model():
     lr = 0.02
 
     # TODO: Define the forward graph.
-    
-
-    y_predict: ad.Node = ... # TODO: The output of the forward pass
+    X = ad.Variable(name="x")
+    nodes = []
+    y_predict: ad.Node = transformer(X, nodes, model_dim, seq_length, eps, batch_size, num_classes) # TODO: The output of the forward pass
     y_groundtruth = ad.Variable(name="y")
     loss: ad.Node = softmax_loss(y_predict, y_groundtruth, batch_size)
-    
-    # TODO: Construct the backward graph.
-    
 
+    # TODO: Construct the backward graph.
     # TODO: Create the evaluator.
-    grads: List[ad.Node] = ... # TODO: Define the gradient nodes here
+    grads: List[ad.Node] = ad.gradients(loss, nodes) # TODO: Define the gradient nodes here
     evaluator = ad.Evaluator([y_predict, loss, *grads])
     test_evaluator = ad.Evaluator([y_predict])
 
@@ -282,17 +271,14 @@ def train_model():
     b_1_val = np.random.uniform(-stdv, stdv, (model_dim,))
     b_2_val = np.random.uniform(-stdv, stdv, (num_classes,))
 
-    def f_run_model(model_weights):
+    def f_run_model(X_batch, y_batch, model_weights):
         """The function to compute the forward and backward graph.
         It returns the logits, loss, and gradients for model weights.
         """
-        result = evaluator.run(
-            input_values={
-                # TODO: Fill in the mapping from variable to tensor
-
-
-            }
-        )
+        input_values = {X : X_batch, y_groundtruth : y_batch}
+        for node, value in zip(nodes, model_weights):
+            input_values[node] = value
+        result = evaluator.run(input_values)
         return result
 
     def f_eval_model(X_val, model_weights: List[torch.Tensor]):
@@ -307,11 +293,10 @@ def train_model():
             if start_idx + batch_size> num_examples:continue
             end_idx = min(start_idx + batch_size, num_examples)
             X_batch = X_val[start_idx:end_idx, :max_len]
-            logits = test_evaluator.run({
-                # TODO: Fill in the mapping from variable to tensor
-
-
-            })
+            input_values = {X : X_batch}
+            for node, value in zip(nodes, model_weights):
+                input_values[node] = value
+            logits = test_evaluator.run(input_values)
             all_logits.append(logits[0])
         # Concatenate all logits and return the predicted classes
         concatenated_logits = np.concatenate(all_logits, axis=0)
@@ -320,7 +305,16 @@ def train_model():
 
     # Train the model.
     X_train, X_test, y_train, y_test= torch.tensor(X_train), torch.tensor(X_test), torch.DoubleTensor(y_train), torch.DoubleTensor(y_test)
-    model_weights: List[torch.Tensor] = [] # TODO: Initialize the model weights here
+    model_weights: List[torch.Tensor] = [
+        W_Q_val,
+        W_K_val,
+        W_V_val,
+        W_O_val,
+        W_1_val,
+        W_2_val,
+        b_1_val,
+        b_2_val
+    ]  # TODO: Initialize the model weights here
     for epoch in range(num_epochs):
         X_train, y_train = shuffle(X_train, y_train)
         model_weights, loss_val = sgd_epoch(

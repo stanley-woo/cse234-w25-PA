@@ -1,0 +1,4 @@
+The intuition is that I did the entire layernorm and matmul calculation by hand from scratch, for both the compute and gradient functions
+For compute, I am using the torch functions for the compuations, which I believed are optimized. While for graident, even though I recomputed the mus, vars again,
+I believe it is still faster than retriving data from the memory, making it faster.
+One thing that I believe might be able to improve is probably optimizing my auto_diff operations? I might not have used the best method to implement my auto_diff ops, so maybe optimizing it will make it better for efficiency.

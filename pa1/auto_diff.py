@@ -480,8 +480,9 @@ class DivOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of division node, return partial adjoint to each input."""
         """TODO: your code here"""
-        grad_A = output_grad / node.inputs[1]
-        grad_B = -1 * output_grad * node.inputs[0] / (node.inputs[1] * node.inputs[1])
+        grad_A = mul(power(node.inputs[1], -1), output_grad)
+        grad_B = mul((mul_by_const(node.inputs[0], -1)/power(node.inputs[1], 2)), output_grad)
+        # grad_B = -1 * output_grad * node.inputs[0] / (node.inputs[1] * node.inputs[1])
         return [grad_A, grad_B]
 
 class DivByConstOp(Op):
@@ -535,7 +536,7 @@ class TransposeOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of transpose node, return partial adjoint to input."""
         """TODO: your code here"""
-        return [TransposeOp()(output_grad, node.attrs["dim1"], node.attrs["dim0"])]
+        return [transpose(output_grad, node.attrs["dim1"], node.attrs["dim0"])]
 
 class MatMulOp(Op):
     """Matrix multiplication op of two nodes."""
@@ -621,9 +622,9 @@ class SoftmaxOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of softmax node, return partial adjoint to input."""
         """TODO: your code here"""
-        softmax = node
-        summation = sum_op(softmax * output_grad, dim=node.attrs["dim"], keepdim=True)
-        return [softmax * (output_grad - summation)]
+        softmaxx = softmax(node.inputs[0], dim=node.attrs["dim"])
+        summation = sum_op(softmaxx * output_grad, dim=node.attrs["dim"], keepdim=True)
+        return [softmaxx * (output_grad - summation)]
 
 
 class LayerNormOp(Op):
@@ -723,6 +724,7 @@ class SqrtOp(Op):
 
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """TODO: your code here"""
+        return [mul(mul_by_const(power(node.inputs[0], -0.5), 0.5), output_grad)]
         sqrt_x = power(node.inputs[0], 0.5)
         return [div(output_grad, mul_by_const(sqrt_x, 2))]
 
@@ -770,7 +772,11 @@ class MeanOp(Op):
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """TODO: your code here"""
         n = sum_op(ones_like(node.inputs[0]), dim=node.dim, keepdim=node.keepdim)
-        return [div(output_grad, n)]
+        if node.attrs["keepdim"]:
+            return [div(output_grad, n)]
+        else:
+            reshape_grad = expand_as_3d(output_grad, node.inputs[0])
+            return [div(reshape_grad, n)]
 
 
 # Create global instances of ops.

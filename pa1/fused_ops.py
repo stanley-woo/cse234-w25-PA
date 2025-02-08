@@ -33,44 +33,40 @@ class MatMulLayerNormOp(Op):
         A = input_values[0]
         B = input_values[1]
         C = A @ B
-        print(f"MatMulLayerNorm: C shape before normalized: {C.shape}")
         mormalized_shape = node.attrs["normalized_shape"]
         eps = node.attrs["eps"]
 
-        C = C[:mormalized_shape[0]]
-        print(f"MatMulLayerNorm: C shape after normalized: {C.shape}")
-
-        mu = mean(C, dim=(-1,), keepdim=True)
-        mu_sqared = mean(power(C, 2.0), dim=(-1,), keepdim=True)
-        var = sub(mu_sqared, power(mu, 2.0))
-        std = sqrt(var + eps)
-
-        res = div(sub(C - mu), std)
-
-        node.attrs["C"] = C
-        node.attrs["mu"] = mu
-        node.attrs["std"] = std
+        dims = tuple(range(-len(mormalized_shape), 0))
+        mu = C.mean(dim=dims, keepdim=True)
+        var = ((C - mu) ** 2).mean(dim=dims, keepdim=True)
+        std = torch.sqrt(var + eps)
+        res = (C - mu) / std
 
         return res
 
     def gradient(self, node: Node, output_grad: Node) -> List[Node]:
         """Given gradient of fused node, return partial adjoints to each input."""
         """TODO: your code here"""
-        C = node.attrs["C"]
-        mu = node.attrs["mu"]
-        std = node.attrs["std"]
-
-        normalized_C = div(sub(C - mu), std)
-        grad_mu = mean(output_grad, dim=(-1,), keepdim=True)
-        grad_norm = mean(mul(output_grad, normalized_C), dim=(-1,), keepdim=True)
-        temp = sub(output_grad, grad_mu)
-        dc = div(sub(temp, mul(normalized_C, grad_norm)), std)
         A = node.inputs[0]
         B = node.inputs[1]
+        C = matmul(A, B)
+        mormalized_shape = node.attrs["normalized_shape"]
+        eps = node.attrs["eps"]
+        dims = tuple(range(-len(mormalized_shape), 0))
+
+        mu = mean(C, dim=dims, keepdim=True)
+        powe = power(sub(C, mu), 2.0)
+        var = mean(powe, dim=dims, keepdim=True)
+        std = sqrt(add_by_const(var, eps))
+        grad_mu = mean(output_grad, dim=dims, keepdim=True)
+        grad_norm = mean(output_grad * sub(C, mu), dim=dims, keepdim=True)
+        stuff = div(mul(sub(C, mu), grad_norm), mul(std, std))
+        inv_std = div(ones_like(std), std)
+        dc = mul(inv_std, (output_grad - grad_mu - stuff))
         da = matmul(dc, transpose(B, -2, -1))
         db = matmul(transpose(A, -2, -1), dc)
-        return [da, db]
 
+        return [da, db]
 
 class MatMulSoftmaxOp(Op):
     """Fused matrix multiplication and softmax operation."""
